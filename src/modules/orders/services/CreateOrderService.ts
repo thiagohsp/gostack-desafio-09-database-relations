@@ -4,6 +4,7 @@ import AppError from '@shared/errors/AppError';
 
 import IProductsRepository from '@modules/products/repositories/IProductsRepository';
 import ICustomersRepository from '@modules/customers/repositories/ICustomersRepository';
+import IUpdateProductsQuantityDTO from '@modules/products/dtos/IUpdateProductsQuantityDTO';
 import Order from '../infra/typeorm/entities/Order';
 import IOrdersRepository from '../repositories/IOrdersRepository';
 
@@ -20,13 +21,61 @@ interface IRequest {
 @injectable()
 class CreateOrderService {
   constructor(
+    @inject('OrdersRepository')
     private ordersRepository: IOrdersRepository,
+    @inject('ProductsRepository')
     private productsRepository: IProductsRepository,
+    @inject('CustomersRepository')
     private customersRepository: ICustomersRepository,
   ) {}
 
   public async execute({ customer_id, products }: IRequest): Promise<Order> {
     // TODO
+    const customer = await this.customersRepository.findById(customer_id);
+
+    if (!customer) {
+      throw new AppError('Customer not exist');
+    }
+
+    const filteredProductsById = await this.productsRepository.findAllById(
+      products,
+    );
+
+    if (filteredProductsById.length !== products.length) {
+      throw new AppError('Inform valid products to create an order');
+    }
+
+    const updatedProducts: IUpdateProductsQuantityDTO[] = [];
+
+    const orderProducts = filteredProductsById.map(product => {
+      const productIndex = products.findIndex(item => item.id === product.id);
+
+      if (product.quantity < products[productIndex].quantity) {
+        throw new AppError('Product has insufficient stock quantity');
+      }
+
+      const { quantity } = products[productIndex];
+
+      updatedProducts.push({
+        id: product.id,
+        quantity: product.quantity - quantity,
+      });
+
+      return {
+        product_id: product.id,
+        price: product.price,
+        quantity,
+      };
+    });
+
+    const order = await this.ordersRepository.create({
+      customer,
+      products: orderProducts,
+    });
+
+    await this.productsRepository.updateQuantity(updatedProducts);
+
+    return order;
   }
 }
 
